@@ -37,7 +37,7 @@ fn main() -> ExitCode {
 
     let host = HostChannel::default();
     handle_calls(&host);
-    if std::env::var_os("GENUI_DEV").is_some() {
+    if dev::enabled() {
         dev::start(host.clone());
     }
     let components = Components::default();
@@ -68,7 +68,9 @@ fn handle_calls(host: &HostChannel) {
         std::thread::spawn(move || {
             // `GENUI_REPLAY` (development) answers without DeepSeek, so it needs no key.
             let replay = std::env::var_os("GENUI_REPLAY").map(|_| "replay".to_owned());
-            call.reply(keychain::get().map(|key| key.or(replay)).map(|key| {
+            let state = keychain::get().map(|key| key.or(replay));
+            dev::event("key", json!({ "hasKey": matches!(state, Ok(Some(_))), "error": state.as_ref().err() }));
+            call.reply(state.map(|key| {
                 json!({
                     "hasKey": key.is_some(),
                     "hint": key.as_deref().map(keychain::hint),

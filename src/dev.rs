@@ -5,9 +5,10 @@
 //!   where the window server gives no picture); needs no Screen Recording permission.
 //! - `keychain-check`: writes, reads and removes a keychain item of its own.
 //! - anything else is sent to the shell as the host event `dev` (`{ "line": … }`), which `shell/App.tsx`
-//!   handles: `prompt <text>`, `generate new|edit|fix`, `settings open|close`, `tab preview|code`.
+//!   handles: `prompt <text>`, `generate new|edit|fix`, `settings open|close`, `tab preview|code`, `model <id>`.
 //!
-//! Each command prints `ok <line>` or `err <line>: <why>` when done.
+//! Each command prints `ok <line>` or `err <line>: <why>` when done. What happens on its own is printed as
+//! `event <name> <json>` ([`event`]): `key`, `generated`, `failed`, `loaded`, `sandbox-error`.
 
 use std::io::BufRead;
 
@@ -17,7 +18,23 @@ use nsh_platform_macos::{
     objc2_app_kit::{NSApplication, NSBitmapImageFileType, NSBitmapImageRep, NSBitmapImageRepPropertyKey, NSWindow},
     objc2_foundation::NSDictionary,
 };
-use serde_json::json;
+use serde_json::{Value, json};
+
+/// Whether the development controls are on (`GENUI_DEV`).
+pub fn enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("GENUI_DEV").is_some())
+}
+
+/// Prints `event <name> <json>` for a driver (`scripts/e2e.py`) when the controls are on.
+pub fn event(name: &str, data: Value) {
+    if enabled() {
+        use std::io::Write;
+        let mut out = std::io::stdout().lock();
+        let _ = writeln!(out, "event {name} {data}");
+        let _ = out.flush();
+    }
+}
 
 pub fn start(host: HostChannel) {
     std::thread::spawn(move || {
@@ -48,6 +65,8 @@ fn report(line: &str, result: Result<(), String>) {
         Ok(()) => println!("ok {line}"),
         Err(e) => println!("err {line}: {e}"),
     }
+    use std::io::Write;
+    let _ = std::io::stdout().flush();
 }
 
 /// The key window's content, else the first window's, as a PNG.

@@ -41,7 +41,10 @@ impl NativeComponent for Sandbox {
         self.loaded = id;
         let js = program["js"].as_str().unwrap_or_default().to_owned();
         match Bundle::source(js).with_capabilities_json(Some(CAPABILITIES)) {
-            Ok(bundle) => self.app.load(bundle.into()),
+            Ok(bundle) => {
+                self.app.load(bundle.into());
+                crate::dev::event("loaded", serde_json::json!({ "id": id }));
+            }
             Err(e) => log::error!(target: "genui", "sandbox capabilities: {e}"),
         }
     }
@@ -61,6 +64,7 @@ pub fn register(components: &Components) {
             // `AppOptions::default()`: the embedding limits (`Limits::default`), not a standalone app's.
             let app = AppView::new(mtm, AppOptions::default());
             app.host().handle("error", move |call| {
+                crate::dev::event("sandbox-error", call.data().clone());
                 context.emit("error", call.data().clone());
                 call.resolve(JsonValue::Null);
             });

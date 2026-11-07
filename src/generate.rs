@@ -21,8 +21,16 @@ static SYSTEM: LazyLock<String> = LazyLock::new(|| {
 pub fn handle(call: HostCall, host: HostChannel) {
     let data = call.data().clone();
     let result = run(&data, &host);
-    if let Err(e) = &result {
-        log::warn!(target: "genui", "generate failed: {e}");
+    match &result {
+        Ok(g) => crate::dev::event("generated", json!({
+            "model": g["model"], "seconds": g["seconds"], "attempts": g["attempts"],
+            "promptTokens": g["promptTokens"], "completionTokens": g["completionTokens"],
+            "summary": g["summary"], "tsx": g["tsx"],
+        })),
+        Err(e) => {
+            log::warn!(target: "genui", "generate failed: {e}");
+            crate::dev::event("failed", json!({ "error": e }));
+        }
     }
     call.reply(result);
 }
@@ -85,6 +93,7 @@ fn run(data: &Value, host: &HostChannel) -> Result<Value, String> {
             }
             Err(e) => {
                 log::warn!(target: "genui", "attempt {attempt} did not pass: {e}");
+                crate::dev::event("rejected", json!({ "attempt": attempt, "error": &e }));
                 messages.push(json!({ "role": "assistant", "content": reply.content }));
                 messages.push(json!({
                     "role": "user",

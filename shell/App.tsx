@@ -205,6 +205,7 @@ function App() {
     else if (command === "generate") generate(arg === "edit" || arg === "fix" ? arg : "new");
     else if (command === "settings") settingsOpen.set(arg !== "close");
     else if (command === "tab") tab.set(arg === "code" ? "code" : "preview");
+    else if (command === "model") chooseModel(arg);
     else console.warn("unknown dev command", line);
   });
 
