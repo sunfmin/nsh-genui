@@ -24,3 +24,7 @@ regex = "1"
 security-framework = "3"
 # Development controls (`src/dev.rs`): the main queue, for screenshots.
 dispatch2 = "0.3"
+
+[dev-dependencies]
+# Headless NSH engines: generated modules run and pressed without a window (tests/).
+nsh-testing = "0.4.0"

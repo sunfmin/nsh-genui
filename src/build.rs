@@ -8,13 +8,53 @@ use std::sync::LazyLock;
 use nsh_core::element::description::SetDescription;
 use regex::Regex;
 
-/// The UI sets the engines serve (NSH's `nsh/base`, the default).
+/// The UI sets the engines serve (NSH's `nsh/base`, the default), each a description of its own:
+/// `nsh/base`'s submodules (`nsh/base/plot`) are sets of their own, which describing `nsh/base` alone leaves
+/// out (then every name of `nsh/base/plot` looked missing).
 fn ui_sets() -> Vec<SetDescription> {
-    vec![nsh_base::registry().into()]
+    nsh_base::registry().sets().into_iter().map(SetDescription::from).collect()
 }
 
 /// The modules generated code may import (`nsh:rt` is what compiled JSX imports).
 const ALLOWED: [&str; 4] = ["nsh", "nsh/base", "nsh/base/plot", "nsh:rt"];
+/// The modules generated code is told about ([`exports_reference`]).
+const IMPORTABLE: [&str; 3] = ["nsh", "nsh/base", "nsh/base/plot"];
+/// JSX's globals: no import (`nsh` does not export them, so importing them fails when the module links).
+const GLOBALS: [&str; 2] = ["If", "Each"];
+
+/// What each module generated code may import exports, as this NSH serves it: the list a model checks its
+/// imports against, made from the runtime, so it never goes stale.
+pub fn exports_reference() -> String {
+    let sets = ui_sets();
+    let mut out = String::from(
+        "## What each module exports\n\nImport only these names (types such as `InputRef` may be imported too). \
+         `If` and `Each` are globals: never import them.\n",
+    );
+    for spec in IMPORTABLE {
+        let mut names = nsh_js::native_module_exports(spec, &sets).unwrap_or_default();
+        names.retain(|n| !n.starts_with('_'));
+        names.sort();
+        out.push_str(&format!("\n- `{spec}`: {}\n", names.join(", ")));
+    }
+    out
+}
+
+/// Removes `If` and `Each` from the module's imports of `"nsh"`: models often import them, and it is the one
+/// mistake with an unambiguous repair.
+fn drop_global_imports(tsx: &str) -> String {
+    static IMPORT: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r#"import\s*\{([^}]*)\}\s*from\s*["']nsh["']\s*;?"#).unwrap());
+    IMPORT
+        .replace_all(tsx, |c: &regex::Captures| {
+            let names: Vec<&str> = c[1]
+                .split(',')
+                .map(str::trim)
+                .filter(|n| !n.is_empty() && !GLOBALS.contains(&n.split(" as ").next().unwrap_or("").trim()))
+                .collect();
+            if names.is_empty() { String::new() } else { format!("import {{ {} }} from \"nsh\";", names.join(", ")) }
+        })
+        .into_owned()
+}
 
 /// Mounts the module's `App` under an error boundary that reports to the host (`src/sandbox.rs`).
 const FOOTER: &str = r#"
@@ -59,7 +99,8 @@ fn wrap(tsx: &str) -> Result<String, String> {
     static DEFAULT_NAME: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"(?m)^\s*export\s+default\s+([A-Za-z_$][\w$]*)\s*;?\s*$").unwrap());
 
-    let code = MOUNT.replace_all(tsx, "");
+    let code = drop_global_imports(tsx);
+    let code = MOUNT.replace_all(&code, "");
     let code = if DEFAULT_FN.is_match(&code) {
         DEFAULT_FN.replace(&code, "function GenuiApp(").into_owned()
     } else if let Some(c) = DEFAULT_NAME.captures(&code) {
@@ -157,9 +198,31 @@ export default function App() {
     }
 
     #[test]
+    fn the_charts_can_be_imported() {
+        let chart = GOOD.replace("import { Button } from \"nsh/base\";", "import { Button } from \"nsh/base\";\nimport { Line, Plot } from \"nsh/base/plot\";")
+            .replace("</Button></View>", "</Button><Plot data={[{ v: 1 }]} y=\"v\" class=\"h-20\"><Line /></Plot></View>");
+        generated(&chart).unwrap();
+    }
+
+    #[test]
     fn a_package_import_is_refused() {
         let err = generated(&format!("import React from \"react\";\nconsole.log(React);\n{GOOD}")).unwrap_err();
         assert!(err.contains("`react` cannot be imported"), "{err}");
+    }
+
+    #[test]
+    fn imports_of_the_globals_are_dropped() {
+        let js = generated(&GOOD.replace("signal, Text, View }", "signal, If, Text, View, Each }")).unwrap();
+        assert!(!js.contains("If,") && !js.contains("Each"), "{js}");
+        let js = generated(&format!("import {{ If }} from \"nsh\";\n{GOOD}")).unwrap();
+        assert!(!js.contains("import { If"), "{js}");
+    }
+
+    #[test]
+    fn the_reference_lists_each_modules_exports() {
+        let r = exports_reference();
+        assert!(r.contains("`nsh`: ") && r.contains("signal") && r.contains("`nsh/base/plot`: "), "{r}");
+        assert!(r.contains("Plot") && r.contains("Line") && !r.contains("LineChart"), "{r}");
     }
 
     #[test]

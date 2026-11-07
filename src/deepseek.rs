@@ -14,6 +14,35 @@ pub struct Client {
     agent: ureq::Agent,
     key: String,
     pub model: String,
+    pub thinking: Thinking,
+}
+
+/// How much the model reasons before it answers (DeepSeek's `thinking` / `reasoning_effort`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Thinking {
+    /// No reasoning: `thinking: { type: "disabled" }`.
+    Off,
+    /// `reasoning_effort: "low"`.
+    Low,
+    /// The model's default.
+    Default,
+}
+
+impl Thinking {
+    pub const ALL: [Thinking; 3] = [Thinking::Off, Thinking::Low, Thinking::Default];
+
+    pub fn id(self) -> &'static str {
+        match self {
+            Thinking::Off => "off",
+            Thinking::Low => "low",
+            Thinking::Default => "default",
+        }
+    }
+
+    /// From [`Self::id`]; anything else is `None`.
+    pub fn from_id(id: &str) -> Option<Thinking> {
+        Thinking::ALL.into_iter().find(|t| t.id() == id)
+    }
 }
 
 /// A piece of the reply as it streams.
@@ -39,7 +68,7 @@ impl Client {
             .http_status_as_error(false)
             .build()
             .into();
-        Client { agent, key, model: model.to_owned() }
+        Client { agent, key, model: model.to_owned(), thinking: Thinking::Default }
     }
 
     /// Whether DeepSeek accepts the key: lists the models, which costs nothing.
@@ -62,14 +91,20 @@ impl Client {
 
     /// Sends `messages` and streams the reply into `on_delta`.
     pub fn chat(&self, messages: &[Value], mut on_delta: impl FnMut(Delta)) -> Result<Reply, String> {
-        let body = json!({
+        let mut body = json!({
             "model": self.model,
             "messages": messages,
             "stream": true,
             "stream_options": { "include_usage": true },
             "temperature": 0.3,
-            "max_tokens": 8192,
+            // Reasoning counts against it: at 8192 a long reasoning left no room for the answer (measured).
+            "max_tokens": 32768,
         });
+        match self.thinking {
+            Thinking::Off => body["thinking"] = json!({ "type": "disabled" }),
+            Thinking::Low => body["reasoning_effort"] = json!("low"),
+            Thinking::Default => {}
+        }
         let mut response = self
             .agent
             .post(ENDPOINT)
@@ -83,6 +118,7 @@ impl Client {
         }
 
         let mut reply = Reply { content: String::new(), prompt_tokens: 0, completion_tokens: 0 };
+        let (mut finish, mut reasoning) = (String::new(), 0usize);
         let reader = BufReader::new(response.body_mut().as_reader());
         for line in reader.lines() {
             let line = line.map_err(|e| format!("DeepSeek stream broke: {e}"))?;
@@ -95,8 +131,12 @@ impl Client {
                 reply.prompt_tokens = usage["prompt_tokens"].as_u64().unwrap_or(0);
                 reply.completion_tokens = usage["completion_tokens"].as_u64().unwrap_or(0);
             }
+            if let Some(reason) = event["choices"][0]["finish_reason"].as_str() {
+                finish = reason.to_owned();
+            }
             let delta = &event["choices"][0]["delta"];
             if let Some(text) = delta["reasoning_content"].as_str() {
+                reasoning += text.chars().count();
                 on_delta(Delta::Reasoning(text));
             }
             if let Some(text) = delta["content"].as_str() {
@@ -105,7 +145,11 @@ impl Client {
             }
         }
         if reply.content.is_empty() {
-            return Err("DeepSeek returned an empty answer".into());
+            return Err(format!(
+                "DeepSeek returned an empty answer (finish_reason {finish:?}, {reasoning} characters of reasoning, \
+                 {} completion tokens)",
+                reply.completion_tokens
+            ));
         }
         Ok(reply)
     }

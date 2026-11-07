@@ -1,20 +1,19 @@
 //! GenUI: a Mac app whose UI DeepSeek writes at run time.
 //!
 //! The window is an NSH app (`shell/App.tsx`, compiled here at start). Its `host.call`s come to this process:
-//! `generate` asks DeepSeek for a TSX module and checks it (`generate.rs`, `build.rs`), `settings.*` keep the
+//! `generate` asks DeepSeek for a TSX module and checks it (`calls.rs`, on the library's `generate.rs`, `build.rs`), `settings.*` keep the
 //! user's API key in the keychain (`keychain.rs`). The shell shows each module in `genui.sandbox`
 //! (`sandbox.rs`), a second NSH engine with no capabilities.
 
-mod build;
-mod deepseek;
+mod calls;
 mod dev;
-mod generate;
 mod keychain;
 mod sandbox;
 
 use std::process::ExitCode;
 
 use nsh_engine::HostChannel;
+use nsh_genui::{build, deepseek};
 use nsh_platform_macos::{AppOptions, AppSource, Bundle, Components, run_app};
 use serde_json::{Value, json};
 
@@ -61,7 +60,7 @@ fn handle_calls(host: &HostChannel) {
     let channel = host.clone();
     host.handle("generate", move |call| {
         let channel = channel.clone();
-        std::thread::spawn(move || generate::handle(call, channel));
+        std::thread::spawn(move || calls::generate(call, channel));
     });
 
     host.handle("settings.get", |call| {
