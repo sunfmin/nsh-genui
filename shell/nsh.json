@@ -1,0 +1,5 @@
+{
+  "name": "GenUI",
+  "id": "dev.felix.nsh-genui",
+  "capabilities": { "host": ["generate", "settings.*"] }
+}
