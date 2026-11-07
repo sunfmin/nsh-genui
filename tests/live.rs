@@ -1,7 +1,7 @@
 //! Integration: real DeepSeek generations, run on a headless NSH engine as the app's sandbox runs them.
 //!
-//! Each case asks DeepSeek for the UI the shell's examples describe (the first also changes its result, as
-//! "在当前版本上改" does), then checks the module renders, shows what was asked for, and survives pressing its
+//! Each case lets DeepSeek write the UI the shell's examples describe, checking it with its tools until it passes (the first also changes its result, as
+//! "在当前版本上改" does), then checks independently that the accepted module renders, shows what was asked for, and survives pressing its
 //! buttons. Costs tokens, so ignored by default: `scripts/integration.sh` runs them with the key from mytokens.
 //! `GENUI_TEST_MODEL` and `GENUI_TEST_THINKING` (off, low, default) pick the model and its reasoning. Each case's module and numbers are written
 //! to `target/live/<model>-<thinking>/`.
@@ -36,15 +36,14 @@ fn case(name: &str, request: Request, expect: &[&str]) -> Generation {
     std::fs::write(out.join(format!("{name}.tsx")), &g.tsx).unwrap();
     let summary = json!({
         "case": name, "instruction": request.instruction, "model": g.model, "thinking": CLIENT.thinking.id(),
-        "seconds": g.seconds,
-        "attempts": g.attempts, "rejected": g.rejected, "promptTokens": g.prompt_tokens,
-        "completionTokens": g.completion_tokens, "summary": g.summary,
+        "seconds": g.seconds, "turns": g.turns, "checks": g.checks, "failed": g.failed,
+        "promptTokens": g.prompt_tokens, "completionTokens": g.completion_tokens, "summary": g.summary,
         "texts": report.texts, "buttons": report.buttons, "pressed": report.pressed, "errors": report.errors,
     });
     std::fs::write(out.join(format!("{name}.json")), serde_json::to_string_pretty(&summary).unwrap()).unwrap();
     eprintln!(
-        "[{name}] {}/{} {:.1}s, {} attempt(s), {} tokens out; {} texts, {} buttons, {} pressed, {} errors",
-        g.model, CLIENT.thinking.id(), g.seconds, g.attempts, g.completion_tokens, report.texts.len(), report.buttons, report.pressed.len(),
+        "[{name}] {}/{} {:.1}s, {} turns, {} checks ({} failed), {} tokens out; {} texts, {} buttons, {} pressed, {} errors",
+        g.model, CLIENT.thinking.id(), g.seconds, g.turns, g.checks, g.failed.len(), g.completion_tokens, report.texts.len(), report.buttons, report.pressed.len(),
         report.errors.len()
     );
 

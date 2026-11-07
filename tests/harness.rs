@@ -17,3 +17,10 @@ fn a_module_that_throws_while_rendering_is_caught() {
     let r = common::render(&common::replay_js("replay-broken.md"));
     assert!(r.errors.iter().any(|e| e.contains("profile")), "{r:#?}");
 }
+
+#[test]
+fn a_text_without_a_color_cannot_be_read_in_dark_mode() {
+    let r = common::render(&common::replay_js("replay-unreadable.md"));
+    assert_eq!(r.errors.len(), 1, "{r:#?}");
+    assert!(r.errors[0].starts_with("in dark mode: text \"没有颜色的标题\" cannot be read"), "{r:#?}");
+}

@@ -41,8 +41,8 @@ let nextId = 1;
 
 /** The key's state as the host reports it: never the key itself, which stays in the keychain. */
 type KeyState = { hasKey: boolean; hint: string | null; models: string[] };
-const keyState = signal<KeyState>({ hasKey: false, hint: null, models: ["deepseek-v4-pro", "deepseek-flash"] });
-const model = signal("deepseek-v4-pro");
+const keyState = signal<KeyState>({ hasKey: false, hint: null, models: ["deepseek-flash", "deepseek-v4-pro"] });
+const model = signal("deepseek-flash");
 const settingsOpen = signal(false);
 
 const message = (e: unknown) => String((e as Error)?.message ?? e);
@@ -334,7 +334,7 @@ function App() {
                     #{v().id} {v().instruction}
                   </Text>
                   <Text class="text-[10px] text-muted-foreground">
-                    {v().model} · {v().seconds.toFixed(1)}s · {v().attempts} 次 · {v().completionTokens} tokens
+                    {v().model} · {v().seconds.toFixed(1)}s · 检查 {v().attempts} 次 · {v().completionTokens} tokens
                   </Text>
                 </Button>
               )}

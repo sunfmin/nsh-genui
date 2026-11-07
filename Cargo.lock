@@ -2350,6 +2350,7 @@ dependencies = [
  "nsh-testing",
  "regex",
  "security-framework",
+ "serde",
  "serde_json",
  "ureq",
 ]

@@ -11,8 +11,7 @@ use nsh_platform_macos::{
     objc2_app_kit::NSView,
 };
 
-/// What generated code may do: post `error` to the host. No network, files, clipboard, ...
-const CAPABILITIES: &str = r#"{ "host": ["error"] }"#;
+use nsh_genui::verify::CAPABILITIES;
 
 struct Sandbox {
     app: Rc<AppView>,

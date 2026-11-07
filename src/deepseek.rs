@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 const ENDPOINT: &str = "https://api.deepseek.com/chat/completions";
 const MODELS: &str = "https://api.deepseek.com/models";
 /// The models the settings offer (DeepSeek's current ids); the first is the default.
-pub const MODEL_IDS: [&str; 2] = ["deepseek-v4-pro", "deepseek-flash"];
+pub const MODEL_IDS: [&str; 2] = ["deepseek-flash", "deepseek-v4-pro"];
 
 pub struct Client {
     agent: ureq::Agent,
@@ -51,12 +51,45 @@ pub enum Delta<'a> {
     Reasoning(&'a str),
     /// The answer.
     Content(&'a str),
+    /// A piece of a tool call's arguments.
+    ToolArguments(&'a str),
 }
 
 pub struct Reply {
     pub content: String,
+    /// The model's reasoning, which a tool loop must send back (DeepSeek answers 400 otherwise).
+    pub reasoning: String,
+    /// The tools the model called, in order.
+    pub tool_calls: Vec<ToolCall>,
     pub prompt_tokens: u64,
     pub completion_tokens: u64,
+}
+
+/// A call of one of the request's tools.
+#[derive(Debug, Clone, Default)]
+pub struct ToolCall {
+    pub id: String,
+    pub name: String,
+    /// JSON, as the model wrote it.
+    pub arguments: String,
+}
+
+impl Reply {
+    /// The reply as the next request's assistant message: content, reasoning and calls together.
+    pub fn message(&self) -> Value {
+        let mut m = json!({ "role": "assistant", "content": self.content });
+        if !self.reasoning.is_empty() {
+            m["reasoning_content"] = json!(self.reasoning);
+        }
+        if !self.tool_calls.is_empty() {
+            m["tool_calls"] = self
+                .tool_calls
+                .iter()
+                .map(|c| json!({ "id": c.id, "type": "function", "function": { "name": c.name, "arguments": c.arguments } }))
+                .collect();
+        }
+        m
+    }
 }
 
 impl Client {
@@ -90,7 +123,12 @@ impl Client {
     }
 
     /// Sends `messages` and streams the reply into `on_delta`.
-    pub fn chat(&self, messages: &[Value], mut on_delta: impl FnMut(Delta)) -> Result<Reply, String> {
+    pub fn chat(&self, messages: &[Value], on_delta: impl FnMut(Delta)) -> Result<Reply, String> {
+        self.chat_with_tools(messages, &[], on_delta)
+    }
+
+    /// Sends `messages` offering `tools` (OpenAI's function definitions) and streams the reply into `on_delta`.
+    pub fn chat_with_tools(&self, messages: &[Value], tools: &[Value], mut on_delta: impl FnMut(Delta)) -> Result<Reply, String> {
         let mut body = json!({
             "model": self.model,
             "messages": messages,
@@ -105,6 +143,9 @@ impl Client {
             Thinking::Low => body["reasoning_effort"] = json!("low"),
             Thinking::Default => {}
         }
+        if !tools.is_empty() {
+            body["tools"] = json!(tools);
+        }
         let mut response = self
             .agent
             .post(ENDPOINT)
@@ -117,7 +158,13 @@ impl Client {
             return Err(format!("DeepSeek answered {status}: {text}"));
         }
 
-        let mut reply = Reply { content: String::new(), prompt_tokens: 0, completion_tokens: 0 };
+        let mut reply = Reply {
+            content: String::new(),
+            reasoning: String::new(),
+            tool_calls: Vec::new(),
+            prompt_tokens: 0,
+            completion_tokens: 0,
+        };
         let (mut finish, mut reasoning) = (String::new(), 0usize);
         let reader = BufReader::new(response.body_mut().as_reader());
         for line in reader.lines() {
@@ -137,14 +184,34 @@ impl Client {
             let delta = &event["choices"][0]["delta"];
             if let Some(text) = delta["reasoning_content"].as_str() {
                 reasoning += text.chars().count();
+                reply.reasoning.push_str(text);
                 on_delta(Delta::Reasoning(text));
             }
             if let Some(text) = delta["content"].as_str() {
                 reply.content.push_str(text);
                 on_delta(Delta::Content(text));
             }
+            // Calls stream in pieces: the first of each (by `index`) has its id and name, every piece a part of
+            // the arguments.
+            for piece in delta["tool_calls"].as_array().into_iter().flatten() {
+                let index = piece["index"].as_u64().unwrap_or(0) as usize;
+                if reply.tool_calls.len() <= index {
+                    reply.tool_calls.resize(index + 1, ToolCall::default());
+                }
+                let call = &mut reply.tool_calls[index];
+                if let Some(id) = piece["id"].as_str() {
+                    call.id = id.to_owned();
+                }
+                if let Some(name) = piece["function"]["name"].as_str() {
+                    call.name.push_str(name);
+                }
+                if let Some(args) = piece["function"]["arguments"].as_str() {
+                    call.arguments.push_str(args);
+                    on_delta(Delta::ToolArguments(args));
+                }
+            }
         }
-        if reply.content.is_empty() {
+        if reply.content.is_empty() && reply.tool_calls.is_empty() {
             return Err(format!(
                 "DeepSeek returned an empty answer (finish_reason {finish:?}, {reasoning} characters of reasoning, \
                  {} completion tokens)",

@@ -16,7 +16,7 @@ pub fn generate(call: HostCall, host: HostChannel) {
     let result = run(&data, &host);
     match &result {
         Ok(g) => dev::event("generated", json!({
-            "model": g.model, "seconds": g.seconds, "attempts": g.attempts,
+            "model": g.model, "seconds": g.seconds, "turns": g.turns, "checks": g.checks,
             "promptTokens": g.prompt_tokens, "completionTokens": g.completion_tokens,
             "summary": g.summary, "tsx": g.tsx,
         })),
@@ -60,16 +60,33 @@ impl<'a> Stream<'a> {
 
     fn push(&mut self, progress: Progress) {
         match progress {
-            Progress::Attempt(n) => {
+            Progress::Turn(n) => {
                 self.flush();
-                let _ = self.host.send("reset", Value::Null);
-                self.status(if n == 1 { format!("{} 正在写代码", self.model) } else { format!("第 {n} 次：按检查结果修正") });
+                self.reasoning = 0;
+                self.status(format!("{} 第 {n} 轮", self.model));
             }
             Progress::Delta(text) => self.pending.push_str(text),
             Progress::Thinking(chars) => self.reasoning = chars,
-            Progress::Rejected { attempt, error } => {
-                log::warn!(target: "genui", "attempt {attempt} did not pass: {error}");
-                dev::event("rejected", json!({ "attempt": attempt, "error": error }));
+            Progress::Writing(chars) => {
+                if self.sent.elapsed() >= Self::EVERY {
+                    self.status(format!("{} 正在写模块（{chars} 字）", self.model));
+                }
+            }
+            // The module being checked replaces what the code panel shows.
+            Progress::Draft(tsx) => {
+                self.pending.clear();
+                let _ = self.host.send("reset", Value::Null);
+                let _ = self.host.send("delta", json!({ "text": tsx }));
+            }
+            Progress::Checked { tool, number, errors } => {
+                let text = if errors.is_empty() {
+                    format!("第 {number} 次检查通过（{tool}）")
+                } else {
+                    format!("第 {number} 次检查：{} 个错误，模型在改", errors.len())
+                };
+                log::info!(target: "genui", "{text}: {errors:?}");
+                dev::event("checked", json!({ "tool": tool, "number": number, "errors": errors }));
+                self.status(text);
             }
         }
         if self.sent.elapsed() >= Self::EVERY {

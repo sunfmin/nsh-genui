@@ -18,13 +18,12 @@ nsh-bundler = { version = "0.4.0", default-features = false }
 nsh-platform-macos = "0.4.0"
 ureq = { version = "3", features = ["json"] }
 serde_json = "1"
+serde = { version = "1", features = ["derive"] }
 env_logger = "0.11"
 log = "0.4"
 regex = "1"
 security-framework = "3"
+# Headless NSH engines: the model's `check` tool runs its module and presses its buttons (src/verify.rs).
+nsh-testing = "0.4.0"
 # Development controls (`src/dev.rs`): the main queue, for screenshots.
 dispatch2 = "0.3"
-
-[dev-dependencies]
-# Headless NSH engines: generated modules run and pressed without a window (tests/).
-nsh-testing = "0.4.0"
